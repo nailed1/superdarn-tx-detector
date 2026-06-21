@@ -1,5 +1,5 @@
 # RST Lite library
-./RSTLite/
+RSTLite/
 
 # Compiled binaries
 *.o
