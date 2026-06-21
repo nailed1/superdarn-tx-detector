@@ -42,7 +42,7 @@ for i, ax in enumerate(axes):
         data.columns,
         data.index,
         data.values,
-        cmap="plasma",
+        cmap="inferno",
         shading="auto"
     )
         
