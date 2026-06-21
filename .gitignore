@@ -1,0 +1,15 @@
+# RST Lite library
+./RSTLite/
+
+# Compiled binaries
+*.o
+*.out
+a.out
+tx_detector
+
+# Data files
+*.fitacf
+*.dat
+
+# Build artifacts
+build/
