@@ -10,6 +10,10 @@ tx_detector
 # Data files
 *.fitacf
 *.dat
+*.bz2
+
+# Output
+csv/
 
 # Build artifacts
 build/

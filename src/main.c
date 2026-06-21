@@ -1,42 +1,52 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <zlib.h>
-#include "rtypes.h"
-#include "dmap.h"
-#include "rprm.h"
-#include "fitblk.h"
-#include "fitdata.h"
-#include "fitread.h"
+#include "main.h"
 
 int main(int argc, char *argv[]) {
+    FILE *fp;
+    struct RadarParm prm;
+    struct RadarParm *PRM;
+    struct FitData fit;
+    struct FitData *FIT;
+
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <filename.fitacf>\n", argv[0]);
-        return 1;
+        fprintf(stderr, "usage %s fname\n", argv[0]);
+        exit(1);
     }
 
-    FILE *fp = fopen(argv[1], "r");
+    if (strstr(argv[1], ".bz2")) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd), "bzip2 -dc %s", argv[1]);
+        fp = popen(cmd, "r");
+    } else {
+        fp = fopen(argv[1], "r");
+    }
+
     if (fp == NULL) {
-        fprintf(stderr, "Error: cannot open file %s\n", argv[1]);
-        return 1;
+        fprintf(stderr, "File %s not found.\n", argv[1]);
+        exit(-1);
     }
 
-    struct RadarParm *prm = RadarParmMake();
-    struct FitData *fit = FitMake();
+    PRM = RadarParmMake();
+    FIT = FitMake();
+    prm = *PRM;
+    fit = *FIT;
 
-    int record = 0;
-    while (FitFread(fp, prm, fit) != -1) {
-        record++;
-        printf("rec=%d noise.search=%.2f stat.agc=%d stat.lopwr=%d\n",
-               record,
-               prm->noise.search,
-               prm->stat.agc,
-               prm->stat.lopwr);
+    printf("time,range,power,velocity,spec_width\n");
+
+    while (FitFread(fp, &prm, &fit) != -1) {
+        long i;
+        for (i = 0; i < prm.nrang; i++) {
+            printf("%.4f,%ld,%.2f,%.2f,%.2f\n",
+                (double)prm.time.hr + (double)prm.time.mt/60. + (double)prm.time.sc/3600.,
+                (long)(prm.frang + prm.rsep * i),
+                (double)fit.rng[i].p_l,
+                (double)fit.rng[i].v,
+                (double)fit.rng[i].w_l
+            );
+        }
     }
 
-    printf("Total records: %d\n", record);
+    if (strstr(argv[1], ".bz2")) pclose(fp);
+    else fclose(fp);
 
-    RadarParmFree(prm);
-    FitFree(fit);
-    fclose(fp);
     return 0;
 }
