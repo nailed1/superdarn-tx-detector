@@ -18,10 +18,11 @@ Reads FITACF files (including `.bz2` compressed) and extracts per-range-gate mea
 
 ### 1. Install RSTLite
 
-The project depends on [RSTLite](https://github.com/SuperDARN/rst) for reading FITACF binary format.
+The project depends on [RSTLite](https://github.com/vtsuperdarn/RSTLite) for reading FITACF binary format.
 
 ```bash
-git clone https://github.com/SuperDARN/rst RSTLite
+git clone https://github.com/vtsuperdarn/RSTLite
+
 cd RSTLite
 ./install.sh
 cd ..
