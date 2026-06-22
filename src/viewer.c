@@ -23,15 +23,18 @@ static void close_file(FILE *fp, const char *fname) {
 }
 
 static void mode_csv(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
-    printf("time,range,power,velocity,spec_width\n");
+    printf("time,range,power,velocity,spec_width,noise_search,stat_agc,stat_lopwr\n");
     while (FitFread(fp, prm, fit) != -1) {
         for (long i = 0; i < prm->nrang; i++) {
-            printf("%.4f,%ld,%.2f,%.2f,%.2f\n",
+            printf("%.4f,%ld,%.2f,%.2f,%.2f,%.2f,%d,%d\n",
                 (double)prm->time.hr + (double)prm->time.mt/60. + (double)prm->time.sc/3600.,
                 (long)(prm->frang + prm->rsep * i),
                 (double)fit->rng[i].p_l,
                 (double)fit->rng[i].v,
-                (double)fit->rng[i].w_l
+                (double)fit->rng[i].w_l,
+                (double)prm->noise.search,
+                prm->stat.agc,
+                prm->stat.lopwr
             );
         }
     }
