@@ -2,7 +2,8 @@ CC = cc
 CFLAGS = -Wall -O2 -D_GNU_SOURCE \
     -I RSTLite/include/base \
     -I RSTLite/include/general \
-    -I RSTLite/include/superdarn
+    -I RSTLite/include/superdarn \
+    -I src
 
 LDFLAGS = -L RSTLite/lib \
     -Wl,-Bstatic \
@@ -11,7 +12,7 @@ LDFLAGS = -L RSTLite/lib \
     -lm -lz
 
 TARGET = tx_detector
-SRC = src/main.c
+SRC = src/viewer.c
 
 all: $(TARGET)
 
