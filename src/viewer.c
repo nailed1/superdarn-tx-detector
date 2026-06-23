@@ -40,7 +40,7 @@ static void mode_csv(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
     }
 }
 
-static void mode_detect(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
+static void mode_detect(FILE *fp, struct RadarParm *prm, struct FitData *fit, double noise_threshold) {
     double noise_sum = 0.0;
     long noise_count = 0;
     long total_ranges = 0;
@@ -67,19 +67,28 @@ static void mode_detect(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
         ? (double)nonzero_ranges / total_ranges
         : 0.0;
 
-    int tx_off = (avg_noise < NOISE_SEARCH_THRESHOLD)
-        && (nonzero_ratio < NONZERO_RATIO_THRESHOLD);
+    int tx_off = (avg_noise < noise_threshold) && (nonzero_ratio < NONZERO_RATIO_THRESHOLD);
 
     printf("%d\n", tx_off ? 0 : 1);
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <fname> [--csv]\n", argv[0]);
+        fprintf(stderr, "usage: %s <fname> [--csv] [--threshold <value>]\n", argv[0]);
         exit(1);
     }
 
-    int csv_mode = (argc >= 3 && strcmp(argv[2], "--csv") == 0);
+    int csv_mode = 0;
+    double noise_threshold = NOISE_SEARCH_THRESHOLD;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--csv") == 0) {
+            csv_mode = 1;
+        } else if (strcmp(argv[i], "--threshold") == 0 && i + 1 < argc) {
+            noise_threshold = atof(argv[i + 1]);
+            i++;
+        }
+    }
 
     FILE *fp = open_file(argv[1]);
     if (fp == NULL) {
@@ -91,7 +100,7 @@ int main(int argc, char *argv[]) {
     struct FitData *fit = FitMake();
 
     if (csv_mode) mode_csv(fp, prm, fit);
-    else mode_detect(fp, prm, fit);
+    else mode_detect(fp, prm, fit, noise_threshold);
 
     close_file(fp, argv[1]);
     return 0;
