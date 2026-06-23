@@ -14,6 +14,7 @@ tx_detector
 
 # Output
 csv/
+results.txt
 
 # Build artifacts
 build/
