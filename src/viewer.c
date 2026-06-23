@@ -41,10 +41,10 @@ static void mode_csv(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
 }
 
 static void mode_detect(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
-    double noise_sum     = 0.0;
-    long   noise_count   = 0;
-    long   total_ranges  = 0;
-    long   nonzero_ranges = 0;
+    double noise_sum = 0.0;
+    long noise_count = 0;
+    long total_ranges = 0;
+    long nonzero_ranges = 0;
 
     while (FitFread(fp, prm, fit) != -1) {
         noise_sum += prm->noise.search;
@@ -62,13 +62,13 @@ static void mode_detect(FILE *fp, struct RadarParm *prm, struct FitData *fit) {
         exit(-1);
     }
 
-    double avg_noise     = noise_sum / noise_count;
+    double avg_noise = noise_sum / noise_count;
     double nonzero_ratio = (total_ranges > 0)
         ? (double)nonzero_ranges / total_ranges
         : 0.0;
 
     int tx_off = (avg_noise < NOISE_SEARCH_THRESHOLD)
-              && (nonzero_ratio < NONZERO_RATIO_THRESHOLD);
+        && (nonzero_ratio < NONZERO_RATIO_THRESHOLD);
 
     printf("%d\n", tx_off ? 0 : 1);
 }
@@ -88,10 +88,10 @@ int main(int argc, char *argv[]) {
     }
 
     struct RadarParm *prm = RadarParmMake();
-    struct FitData   *fit = FitMake();
+    struct FitData *fit = FitMake();
 
     if (csv_mode) mode_csv(fp, prm, fit);
-    else          mode_detect(fp, prm, fit);
+    else mode_detect(fp, prm, fit);
 
     close_file(fp, argv[1]);
     return 0;
