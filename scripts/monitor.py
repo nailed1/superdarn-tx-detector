@@ -69,6 +69,7 @@ def load_config(path):
             "max_alerts_per_incident", fallback=DEFAULT_MAX_ALERTS
         ),
         "state_file": section["state_file"],
+        "alert_email": section.get("alert_email", ""),
     }
 
 
@@ -145,7 +146,96 @@ def utc_now_for_comparison(utc_offset_hours):
     return server_now() - timedelta(hours=utc_offset_hours)
 
 
-def handle_incident(*, condition, incident_key, message, state, max_alerts):
+def pause_flag_path(state_file):
+    base, _ = os.path.splitext(state_file)
+    return base + ".pause"
+
+
+def is_paused(state_file):
+    return os.path.exists(pause_flag_path(state_file))
+
+
+def set_paused(state_file, paused):
+    path = pause_flag_path(state_file)
+    if paused:
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8"):
+            pass
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def format_threshold(minutes):
+    if minutes >= 60 and minutes % 60 == 0:
+        return f"{int(minutes // 60)}h"
+    if minutes >= 60:
+        hours = minutes / 60
+        return f"{hours:g}h"
+    return f"{int(minutes)}min"
+
+
+def format_age(age):
+    total_minutes = int(age.total_seconds() // 60)
+    if total_minutes < 60:
+        return f"{total_minutes} min ago"
+    hours = total_minutes // 60
+    rem = total_minutes % 60
+    if rem == 0:
+        return f"{hours}h ago"
+    return f"{hours}h {rem}min ago"
+
+
+def inspect_instance(config, state):
+    files = scan_directory(config["directory"], config["mask"])
+    max_alerts = config["max_alerts_per_incident"]
+    stale_threshold = timedelta(minutes=config["stale_threshold_minutes"])
+    offset_hours = config["utc_offset_hours"]
+    min_size = config["min_file_size_bytes"]
+    now_utc = utc_now_for_comparison(offset_hours)
+    paused = is_paused(config["state_file"])
+
+    stale = False
+    too_small = False
+    last_file = None
+    age = None
+
+    if not files:
+        stale = True
+    else:
+        newest_ts, newest_name, newest_path = files[-1]
+        age = now_utc - newest_ts
+        stale = age > stale_threshold
+        file_size = os.path.getsize(newest_path)
+        too_small = file_size < min_size
+        last_file = newest_name
+
+    alert_count = max(
+        state[INCIDENT_STALE]["alert_count"],
+        state[INCIDENT_SMALL]["alert_count"],
+    )
+
+    if paused:
+        status = "PAUSED"
+    elif stale or too_small:
+        status = "ALERT"
+    else:
+        status = "ACTIVE"
+
+    return {
+        "paused": paused,
+        "status": status,
+        "stale": stale,
+        "too_small": too_small,
+        "last_file": last_file,
+        "age": age,
+        "alert_count": alert_count,
+        "max_alerts": max_alerts,
+    }
+
+
+def handle_incident(*, condition, incident_key, message, state, max_alerts, paused=False):
     incident = state[incident_key]
     alerted = False
 
@@ -154,7 +244,7 @@ def handle_incident(*, condition, incident_key, message, state, max_alerts):
             incident["active"] = True
             incident["alert_count"] = 0
 
-        if incident["alert_count"] < max_alerts:
+        if incident["alert_count"] < max_alerts and not paused:
             print(f"[ALERT] {message}", flush=True)
             incident["alert_count"] += 1
             alerted = True
@@ -172,6 +262,7 @@ def run_monitor(config, state):
     offset_hours = config["utc_offset_hours"]
     min_size = config["min_file_size_bytes"]
     now_utc = utc_now_for_comparison(offset_hours)
+    paused = is_paused(config["state_file"])
 
     any_alert = False
 
@@ -185,6 +276,7 @@ def run_monitor(config, state):
             ),
             state=state,
             max_alerts=max_alerts,
+            paused=paused,
         )
         handle_incident(
             condition=False,
@@ -192,6 +284,7 @@ def run_monitor(config, state):
             message="",
             state=state,
             max_alerts=max_alerts,
+            paused=paused,
         )
         return any_alert
 
@@ -211,6 +304,7 @@ def run_monitor(config, state):
         ),
         state=state,
         max_alerts=max_alerts,
+        paused=paused,
     )
 
     file_size = os.path.getsize(newest_path)
@@ -225,6 +319,7 @@ def run_monitor(config, state):
         ),
         state=state,
         max_alerts=max_alerts,
+        paused=paused,
     )
 
     return any_alert

@@ -7,6 +7,9 @@ RSTLite/
 a.out
 tx_detector
 
+# Python cache
+__pycache__/
+
 # Data files
 *.fitacf
 *.dat
