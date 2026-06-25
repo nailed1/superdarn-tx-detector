@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - run: pip install pytest
+
+      - run: pytest -v
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      - name: Clone and build RSTLite
+        run: |
+          git clone --depth 1 https://github.com/vtsuperdarn/RSTLite
+          cd RSTLite
+          bash install.sh
+
+      - name: Build tx_detector
+        run: make
+
+      - name: Verify binary
+        run: ./tx_detector 2>&1 || true

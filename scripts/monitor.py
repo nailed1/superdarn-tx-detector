@@ -141,7 +141,9 @@ def load_config(target, config_dir=None, state_dir=None):
         raise ValueError(f"{config_path}: missing [monitor] section")
 
     monitor = parser["monitor"]
-    alerts = parser["alerts"] if parser.has_section("alerts") else {}
+    if not parser.has_section("alerts"):
+        parser.add_section("alerts")
+    alerts = parser["alerts"]
 
     required = ("directory", "mask", "threshold")
     missing = [key for key in required if not monitor.get(key)]
