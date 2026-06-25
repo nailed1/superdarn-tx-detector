@@ -21,3 +21,9 @@ results.txt
 
 # Build artifacts
 build/
+
+# Monitor runtime/config files
+*.conf
+smtp.conf
+*.state
+*.pause

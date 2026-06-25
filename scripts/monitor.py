@@ -18,10 +18,21 @@ Config (INI, one file per instance):
     [alerts]
     max_alerts = 3
     recipient  = oleg@example.com
-    sendmail   = /usr/sbin/sendmail
+
+SMTP credentials (shared, one file for all instances):
+
+    /etc/confings-monitor/smtp.conf
+
+    [smtp]
+    host     = smtp.gmail.com
+    port     = 465
+    user     = monitor@example.com
+    password = secret
+    sender   = monitor@example.com
 
 State and pause flag live under MONITOR_STATE_DIR (not in the config file).
 Config path: argument or MONITOR_CONFIG_DIR/<instance>.conf
+SMTP path: MONITOR_SMTP_CONFIG or MONITOR_CONFIG_DIR/smtp.conf
 """
 
 import argparse
@@ -29,9 +40,12 @@ import fnmatch
 import json
 import os
 import re
+import smtplib
+import ssl
 import sys
 from configparser import ConfigParser
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,8 +54,11 @@ THRESHOLD_RE = re.compile(r"^(\d+(?:\.\d+)?)(h|min|m)?$", re.IGNORECASE)
 
 DEFAULT_CONFIG_DIR = "/etc/confings-monitor"
 DEFAULT_STATE_DIR = "/var/lib/states-monitor"
+DEFAULT_SMTP_FILE = "smtp.conf"
 DEFAULT_MIN_SIZE = 15
 DEFAULT_MAX_ALERTS = 3
+DEFAULT_SMTP_HOST = ""
+DEFAULT_SMTP_PORT = 465
 
 INCIDENT_STALE = "stale"
 INCIDENT_SMALL = "small_file"
@@ -53,6 +70,14 @@ def default_config_dir():
 
 def default_state_dir():
     return os.environ.get("MONITOR_STATE_DIR", DEFAULT_STATE_DIR)
+
+
+def smtp_config_path(config_dir=None):
+    env_path = os.environ.get("MONITOR_SMTP_CONFIG")
+    if env_path:
+        return env_path
+    config_dir = config_dir or default_config_dir()
+    return os.path.join(config_dir, DEFAULT_SMTP_FILE)
 
 
 def config_path_for_instance(instance, config_dir=None):
@@ -139,7 +164,29 @@ def load_config(target, config_dir=None, state_dir=None):
         "min_size": monitor.getint("min_size", fallback=DEFAULT_MIN_SIZE),
         "max_alerts": alerts.getint("max_alerts", fallback=DEFAULT_MAX_ALERTS),
         "recipient": alerts.get("recipient", "").strip(),
-        "sendmail": alerts.get("sendmail", "/usr/sbin/sendmail").strip(),
+    }
+
+
+def load_smtp_config(config_dir=None):
+    path = smtp_config_path(config_dir)
+    if not os.path.isfile(path):
+        return None
+
+    parser = ConfigParser()
+    if not parser.read(path):
+        return None
+
+    if not parser.has_section("smtp"):
+        return None
+
+    smtp = parser["smtp"]
+    return {
+        "path": path,
+        "host": smtp.get("host", DEFAULT_SMTP_HOST).strip(),
+        "port": smtp.getint("port", fallback=DEFAULT_SMTP_PORT),
+        "user": smtp.get("user", "").strip(),
+        "password": smtp.get("password", "").strip(),
+        "sender": smtp.get("sender", "").strip(),
     }
 
 
@@ -248,6 +295,33 @@ def format_age(age):
     return f"{hours}h {rem}min ago"
 
 
+def send_email(config, smtp_config, subject, body):
+    recipient = config.get("recipient", "")
+    if not recipient or not smtp_config or not smtp_config.get("user"):
+        return None
+
+    sender = smtp_config.get("sender", "").strip() or smtp_config.get("user", "").strip()
+    smtp_host = smtp_config.get("host", DEFAULT_SMTP_HOST)
+    smtp_port = smtp_config.get("port", DEFAULT_SMTP_PORT)
+    smtp_password = smtp_config.get("password", "")
+
+    msg = EmailMessage()
+    msg["To"] = recipient
+    msg["From"] = sender
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+            server.login(smtp_config["user"], smtp_password)
+            server.send_message(msg)
+        return True
+    except Exception as exc:
+        print(f"[ERROR] email: {exc}", file=sys.stderr, flush=True)
+        return False
+
+
 def inspect_instance(config, state):
     files = scan_directory(config["directory"], config["mask"])
     max_alerts = config["max_alerts"]
@@ -296,7 +370,19 @@ def inspect_instance(config, state):
     }
 
 
-def handle_incident(*, condition, incident_key, message, state, max_alerts, paused=False):
+def handle_incident(
+    *,
+    condition,
+    incident_key,
+    message,
+    state,
+    max_alerts,
+    paused=False,
+    config=None,
+    smtp_config=None,
+    last_file=None,
+    age=None,
+):
     incident = state[incident_key]
     alerted = False
 
@@ -309,6 +395,18 @@ def handle_incident(*, condition, incident_key, message, state, max_alerts, paus
             print(f"[ALERT] {message}", flush=True)
             incident["alert_count"] += 1
             alerted = True
+
+            if config is not None:
+                age_str = format_age(age) if age is not None else "n/a"
+                subject = f"[monitor] {config['instance']} - {incident_key} ({age_str})"
+                body = (
+                    f"Instance: {config['instance']}\n"
+                    f"Directory: {config['directory']}\n"
+                    f"Last file: {last_file or 'none'}\n"
+                    f"Time since: {age_str}\n"
+                    f"Alert: {incident['alert_count']} / {max_alerts}"
+                )
+                send_email(config, smtp_config, subject, body)
     elif incident["active"]:
         incident["active"] = False
         incident["alert_count"] = 0
@@ -316,7 +414,7 @@ def handle_incident(*, condition, incident_key, message, state, max_alerts, paus
     return alerted
 
 
-def run_monitor(config, state):
+def run_monitor(config, state, smtp_config=None):
     files = scan_directory(config["directory"], config["mask"])
     max_alerts = config["max_alerts"]
     stale_threshold = timedelta(minutes=config["threshold_minutes"])
@@ -338,6 +436,8 @@ def run_monitor(config, state):
             state=state,
             max_alerts=max_alerts,
             paused=paused,
+            config=config,
+            smtp_config=smtp_config,
         )
         handle_incident(
             condition=False,
@@ -346,6 +446,8 @@ def run_monitor(config, state):
             state=state,
             max_alerts=max_alerts,
             paused=paused,
+            config=config,
+            smtp_config=smtp_config,
         )
         return any_alert
 
@@ -365,6 +467,10 @@ def run_monitor(config, state):
         state=state,
         max_alerts=max_alerts,
         paused=paused,
+        config=config,
+        smtp_config=smtp_config,
+        last_file=newest_name,
+        age=age,
     )
 
     file_size = os.path.getsize(newest_path)
@@ -380,6 +486,10 @@ def run_monitor(config, state):
         state=state,
         max_alerts=max_alerts,
         paused=paused,
+        config=config,
+        smtp_config=smtp_config,
+        last_file=newest_name,
+        age=age,
     )
 
     return any_alert
@@ -407,8 +517,9 @@ def main(argv=None):
 
     try:
         config = load_config(args.target, args.config_dir, args.state_dir)
+        smtp_config = load_smtp_config(args.config_dir)
         state = load_state(config["state_file"])
-        alerted = run_monitor(config, state)
+        alerted = run_monitor(config, state, smtp_config)
         save_state(config["state_file"], state)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr, flush=True)

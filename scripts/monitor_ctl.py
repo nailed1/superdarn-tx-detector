@@ -8,6 +8,7 @@ Commands (from scripts/):
     monitor-test <instance>
 
 Instance config: MONITOR_CONFIG_DIR/<instance>.conf
+SMTP config: MONITOR_SMTP_CONFIG or MONITOR_CONFIG_DIR/smtp.conf
 State: MONITOR_STATE_DIR/<instance>.state
 """
 
@@ -26,7 +27,9 @@ from monitor import (
     inspect_instance,
     is_paused,
     load_config,
+    load_smtp_config,
     load_state,
+    send_email,
     set_paused,
 )
 
@@ -47,7 +50,7 @@ def resolve_instance(name, config_dir, state_dir):
     return load_config(name, config_dir, state_dir)
 
 
-def cmd_pause(instance, config):
+def cmd_pause(instance, config, smtp_config=None):
     if is_paused(config["state_file"]):
         print(f"{instance}: already paused")
         return 0
@@ -56,7 +59,7 @@ def cmd_pause(instance, config):
     return 0
 
 
-def cmd_resume(instance, config):
+def cmd_resume(instance, config, smtp_config=None):
     if not is_paused(config["state_file"]):
         print(f"{instance}: already active")
         return 0
@@ -65,7 +68,7 @@ def cmd_resume(instance, config):
     return 0
 
 
-def cmd_status(instance, config):
+def cmd_status(instance, config, smtp_config=None):
     state = load_state(config["state_file"])
     info = inspect_instance(config, state)
 
@@ -84,15 +87,18 @@ def cmd_status(instance, config):
     return 0
 
 
-def cmd_test(instance, config):
-    recipient = config.get("recipient") or "(not configured)"
-    print(f"instance: {instance}")
-    print(f"to: {recipient}")
-    print(f"sendmail: {config.get('sendmail') or '(not configured)'}")
-    print("subject: [TEST] SuperDARN monitor alert")
-    print(f"body: Test alert from monitor instance '{instance}'")
-    print("delivery: confirmed (stdout only, email not implemented yet)")
-    return 0
+def cmd_test(instance, config, smtp_config=None):
+    subject = "[TEST] SuperDARN monitor alert"
+    body = f"Test alert from monitor instance '{instance}'"
+    result = send_email(config, smtp_config, subject, body)
+    if result is True:
+        print("Email sent successfully")
+        return 0
+    if result is False:
+        print("Email delivery failed (see stderr)")
+        return 1
+    print("Email skipped: recipient or SMTP user not configured")
+    return 1
 
 
 COMMANDS = {
@@ -153,7 +159,8 @@ def main(argv=None):
 
     try:
         config = resolve_instance(args.instance, args.config_dir, args.state_dir)
-        return COMMANDS[cmd](args.instance, config)
+        smtp_config = load_smtp_config(args.config_dir)
+        return COMMANDS[cmd](args.instance, config, smtp_config)
     except (OSError, ValueError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 2
