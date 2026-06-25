@@ -3,18 +3,25 @@
 
 Designed for cron. Example:
 
-    */5 * * * * python3 /path/scripts/monitor.py /path/monitor.conf
+    */5 * * * * python3 /path/scripts/monitor.py ekb_fitacf
+    */5 * * * * python3 /path/scripts/monitor.py /etc/confings-monitor/ekb_fitacf.conf
 
-Config (INI):
+Config (INI, one file per instance):
 
     [monitor]
-    directory = /var/data/superdarn
-    mask = YYYYMMDD.HHMM.*.fitacf.bz2
-    utc_offset_hours = 0
-    stale_threshold_minutes = 30
-    min_file_size_bytes = 15
-    max_alerts_per_incident = 3
-    state_file = /var/lib/superdarn-monitor.state
+    directory  = /data/ekb/
+    mask       = *.fitacf.bz2
+    threshold  = 3h
+    utc_offset = +5
+    min_size   = 15
+
+    [alerts]
+    max_alerts = 3
+    recipient  = oleg@example.com
+    sendmail   = /usr/sbin/sendmail
+
+State and pause flag live under MONITOR_STATE_DIR (not in the config file).
+Config path: argument or MONITOR_CONFIG_DIR/<instance>.conf
 """
 
 import argparse
@@ -26,13 +33,68 @@ import sys
 from configparser import ConfigParser
 from datetime import datetime, timedelta
 
-TIMESTAMP_RE = re.compile(r"^(\d{8})\.(\d{4})")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+TIMESTAMP_RE = re.compile(r"^(\d{8})\.(\d{4})")
+THRESHOLD_RE = re.compile(r"^(\d+(?:\.\d+)?)(h|min|m)?$", re.IGNORECASE)
+
+DEFAULT_CONFIG_DIR = "/etc/confings-monitor"
+DEFAULT_STATE_DIR = "/var/lib/states-monitor"
 DEFAULT_MIN_SIZE = 15
 DEFAULT_MAX_ALERTS = 3
 
 INCIDENT_STALE = "stale"
 INCIDENT_SMALL = "small_file"
+
+
+def default_config_dir():
+    return os.environ.get("MONITOR_CONFIG_DIR", DEFAULT_CONFIG_DIR)
+
+
+def default_state_dir():
+    return os.environ.get("MONITOR_STATE_DIR", DEFAULT_STATE_DIR)
+
+
+def config_path_for_instance(instance, config_dir=None):
+    config_dir = config_dir or default_config_dir()
+    return os.path.join(config_dir, instance + ".conf")
+
+
+def state_path_for_instance(instance, state_dir=None):
+    state_dir = state_dir or default_state_dir()
+    return os.path.join(state_dir, instance + ".state")
+
+
+def instance_from_config_path(path):
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def resolve_target(target, config_dir=None):
+    if os.path.sep in target or target.endswith(".conf") or target.endswith(".ini"):
+        config_path = os.path.abspath(target)
+        if not os.path.isfile(config_path):
+            raise FileNotFoundError(f"Config not found: {config_path}")
+        return instance_from_config_path(config_path), config_path
+    return target, config_path_for_instance(target, config_dir)
+
+
+def parse_threshold(value):
+    match = THRESHOLD_RE.match(value.strip())
+    if not match:
+        raise ValueError(f"Invalid threshold: {value!r} (use e.g. 3h, 30min, 90)")
+
+    amount = float(match.group(1))
+    unit = (match.group(2) or "").lower()
+    if unit == "h":
+        return amount * 60
+    return amount
+
+
+def parse_utc_offset(value):
+    try:
+        return float(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"Invalid utc_offset: {value!r}") from exc
 
 
 def default_state():
@@ -42,34 +104,42 @@ def default_state():
     }
 
 
-def load_config(path):
+def load_config(target, config_dir=None, state_dir=None):
+    instance, config_path = resolve_target(target, config_dir)
+
     parser = ConfigParser()
-    read = parser.read(path)
+    read = parser.read(config_path)
     if not read:
-        raise FileNotFoundError(f"Config not found: {path}")
+        raise FileNotFoundError(f"Config not found: {config_path}")
 
     if not parser.has_section("monitor"):
-        raise ValueError("Config must contain a [monitor] section")
+        raise ValueError(f"{config_path}: missing [monitor] section")
 
-    section = parser["monitor"]
-    required = ("directory", "mask", "stale_threshold_minutes", "state_file")
-    missing = [key for key in required if not section.get(key)]
+    monitor = parser["monitor"]
+    alerts = parser["alerts"] if parser.has_section("alerts") else {}
+
+    required = ("directory", "mask", "threshold")
+    missing = [key for key in required if not monitor.get(key)]
     if missing:
-        raise ValueError(f"Missing required config keys: {', '.join(missing)}")
+        raise ValueError(f"{config_path}: missing keys: {', '.join(missing)}")
+
+    threshold_raw = monitor["threshold"].strip()
+    utc_offset_raw = monitor.get("utc_offset", "0").strip()
 
     return {
-        "directory": section["directory"],
-        "mask": section["mask"],
-        "utc_offset_hours": section.getfloat("utc_offset_hours", fallback=0.0),
-        "stale_threshold_minutes": section.getfloat("stale_threshold_minutes"),
-        "min_file_size_bytes": section.getint(
-            "min_file_size_bytes", fallback=DEFAULT_MIN_SIZE
-        ),
-        "max_alerts_per_incident": section.getint(
-            "max_alerts_per_incident", fallback=DEFAULT_MAX_ALERTS
-        ),
-        "state_file": section["state_file"],
-        "alert_email": section.get("alert_email", ""),
+        "instance": instance,
+        "config_path": config_path,
+        "state_file": state_path_for_instance(instance, state_dir),
+        "directory": monitor["directory"].strip(),
+        "mask": monitor["mask"].strip(),
+        "threshold": threshold_raw,
+        "threshold_minutes": parse_threshold(threshold_raw),
+        "utc_offset": utc_offset_raw,
+        "utc_offset_hours": parse_utc_offset(utc_offset_raw),
+        "min_size": monitor.getint("min_size", fallback=DEFAULT_MIN_SIZE),
+        "max_alerts": alerts.getint("max_alerts", fallback=DEFAULT_MAX_ALERTS),
+        "recipient": alerts.get("recipient", "").strip(),
+        "sendmail": alerts.get("sendmail", "/usr/sbin/sendmail").strip(),
     }
 
 
@@ -167,15 +237,6 @@ def set_paused(state_file, paused):
         os.remove(path)
 
 
-def format_threshold(minutes):
-    if minutes >= 60 and minutes % 60 == 0:
-        return f"{int(minutes // 60)}h"
-    if minutes >= 60:
-        hours = minutes / 60
-        return f"{hours:g}h"
-    return f"{int(minutes)}min"
-
-
 def format_age(age):
     total_minutes = int(age.total_seconds() // 60)
     if total_minutes < 60:
@@ -189,10 +250,10 @@ def format_age(age):
 
 def inspect_instance(config, state):
     files = scan_directory(config["directory"], config["mask"])
-    max_alerts = config["max_alerts_per_incident"]
-    stale_threshold = timedelta(minutes=config["stale_threshold_minutes"])
+    max_alerts = config["max_alerts"]
+    stale_threshold = timedelta(minutes=config["threshold_minutes"])
     offset_hours = config["utc_offset_hours"]
-    min_size = config["min_file_size_bytes"]
+    min_size = config["min_size"]
     now_utc = utc_now_for_comparison(offset_hours)
     paused = is_paused(config["state_file"])
 
@@ -257,10 +318,10 @@ def handle_incident(*, condition, incident_key, message, state, max_alerts, paus
 
 def run_monitor(config, state):
     files = scan_directory(config["directory"], config["mask"])
-    max_alerts = config["max_alerts_per_incident"]
-    stale_threshold = timedelta(minutes=config["stale_threshold_minutes"])
+    max_alerts = config["max_alerts"]
+    stale_threshold = timedelta(minutes=config["threshold_minutes"])
     offset_hours = config["utc_offset_hours"]
-    min_size = config["min_file_size_bytes"]
+    min_size = config["min_size"]
     now_utc = utc_now_for_comparison(offset_hours)
     paused = is_paused(config["state_file"])
 
@@ -289,15 +350,14 @@ def run_monitor(config, state):
         return any_alert
 
     newest_ts, newest_name, newest_path = files[-1]
-    newest_utc = newest_ts
-    age = now_utc - newest_utc
+    age = now_utc - newest_ts
     stale = age > stale_threshold
 
     any_alert |= handle_incident(
         condition=stale,
         incident_key=INCIDENT_STALE,
         message=(
-            f"No new file within {config['stale_threshold_minutes']:g} min: "
+            f"No new file within {config['threshold']}: "
             f"newest={newest_name} "
             f"(filename_time={newest_ts:%Y-%m-%d %H:%M}, "
             f"age={age.total_seconds() / 60:.1f} min)"
@@ -330,13 +390,23 @@ def main(argv=None):
         description="Monitor SuperDARN data directory for stale or small files."
     )
     parser.add_argument(
-        "config",
-        help="Path to INI config file with a [monitor] section",
+        "target",
+        help="Instance name or path to instance config file",
+    )
+    parser.add_argument(
+        "--config-dir",
+        default=default_config_dir(),
+        help=f"Config directory when target is instance name (default: {DEFAULT_CONFIG_DIR})",
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=default_state_dir(),
+        help=f"State directory (default: {DEFAULT_STATE_DIR})",
     )
     args = parser.parse_args(argv)
 
     try:
-        config = load_config(args.config)
+        config = load_config(args.target, args.config_dir, args.state_dir)
         state = load_state(config["state_file"])
         alerted = run_monitor(config, state)
         save_state(config["state_file"], state)

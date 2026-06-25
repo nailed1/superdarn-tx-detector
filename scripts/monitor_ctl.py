@@ -1,32 +1,28 @@
 #!/usr/bin/env python3
-"""Operator CLI for file monitor instances.
+"""Operator CLI for SuperDARN file monitor instances.
 
-Usage:
-    monitor_ctl.py pause <instance>
-    monitor_ctl.py resume <instance>
-    monitor_ctl.py status <instance>
-    monitor_ctl.py test <instance>
+Commands (from scripts/):
+    monitor-pause <instance>
+    monitor-resume <instance>
+    monitor-status <instance>
+    monitor-test <instance>
 
-Also works via symlinks: monitor-pause, monitor-resume, monitor-status, monitor-test.
-
-Instances are listed in monitor_instances.ini (or MONITOR_INSTANCES env):
-
-    [instances]
-    ekb_fitacf = /etc/superdarn/ekb_fitacf.conf
+Instance config: MONITOR_CONFIG_DIR/<instance>.conf
+State: MONITOR_STATE_DIR/<instance>.state
 """
 
 import argparse
 import os
 import sys
-from configparser import ConfigParser
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from monitor import (
+    default_config_dir,
+    default_state_dir,
     format_age,
-    format_threshold,
     inspect_instance,
     is_paused,
     load_config,
@@ -34,35 +30,9 @@ from monitor import (
     set_paused,
 )
 
-DEFAULT_INSTANCES_FILE = os.path.join(SCRIPT_DIR, "monitor_instances.ini")
-
 GREEN = "\033[32m"
 RED = "\033[31m"
 RESET = "\033[0m"
-
-
-def default_instances_file():
-    return os.environ.get("MONITOR_INSTANCES", DEFAULT_INSTANCES_FILE)
-
-
-def load_instances(path):
-    parser = ConfigParser()
-    read = parser.read(path)
-    if not read:
-        raise FileNotFoundError(f"Instances file not found: {path}")
-
-    if not parser.has_section("instances"):
-        raise ValueError("Instances file must contain an [instances] section")
-
-    return dict(parser["instances"])
-
-
-def resolve_instance(name, instances_path):
-    instances = load_instances(instances_path)
-    if name not in instances:
-        known = ", ".join(sorted(instances)) or "(none)"
-        raise ValueError(f"Unknown instance '{name}'. Known: {known}")
-    return load_config(instances[name])
 
 
 def color_status(status):
@@ -71,6 +41,10 @@ def color_status(status):
         return status
     color = GREEN if ok else RED
     return f"{color}{status}{RESET}"
+
+
+def resolve_instance(name, config_dir, state_dir):
+    return load_config(name, config_dir, state_dir)
 
 
 def cmd_pause(instance, config):
@@ -105,15 +79,16 @@ def cmd_status(instance, config):
     else:
         print("last file: (none)")
 
-    print(f"threshold: {format_threshold(config['stale_threshold_minutes'])}")
+    print(f"threshold: {config['threshold']}")
     print(f"alerts sent: {info['alert_count']} / {info['max_alerts']}")
     return 0
 
 
 def cmd_test(instance, config):
-    email = config.get("alert_email") or "(not configured)"
+    recipient = config.get("recipient") or "(not configured)"
     print(f"instance: {instance}")
-    print(f"to: {email}")
+    print(f"to: {recipient}")
+    print(f"sendmail: {config.get('sendmail') or '(not configured)'}")
     print("subject: [TEST] SuperDARN monitor alert")
     print(f"body: Test alert from monitor instance '{instance}'")
     print("delivery: confirmed (stdout only, email not implemented yet)")
@@ -140,6 +115,19 @@ def parse_operator_args(argv):
     return None, argv
 
 
+def add_common_args(parser):
+    parser.add_argument(
+        "--config-dir",
+        default=default_config_dir(),
+        help="Directory with <instance>.conf files",
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=default_state_dir(),
+        help="Directory for <instance>.state and pause flags",
+    )
+
+
 def main(argv=None):
     if argv is None:
         full_argv = sys.argv
@@ -149,11 +137,7 @@ def main(argv=None):
     command, rest = parse_operator_args(full_argv)
 
     parser = argparse.ArgumentParser(description="SuperDARN monitor operator CLI")
-    parser.add_argument(
-        "--instances",
-        default=default_instances_file(),
-        help="Path to instances registry INI (default: monitor_instances.ini)",
-    )
+    add_common_args(parser)
 
     if command and command in COMMANDS:
         parser.add_argument("instance", help="Monitor instance name")
@@ -168,7 +152,7 @@ def main(argv=None):
         cmd = args.command
 
     try:
-        config = resolve_instance(args.instance, args.instances)
+        config = resolve_instance(args.instance, args.config_dir, args.state_dir)
         return COMMANDS[cmd](args.instance, config)
     except (OSError, ValueError) as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
