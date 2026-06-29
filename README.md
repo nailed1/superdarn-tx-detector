@@ -112,7 +112,12 @@ python scripts/visualize.py csv/20260614.0001.06.ekb.csv
 
 ### 5. Monitor system
 
-See `monitor/` for the continuous monitoring daemon (multi-instance, email alerts, CLI control).
+```bash
+python scripts/monitor.py --help       # continuous monitoring daemon
+python scripts/monitor_ctl.py --help   # CLI control (pause, resume, status)
+```
+
+Supports multi-instance config and email alerts.
 
 ## Project structure
 
@@ -125,8 +130,9 @@ superdarn-tx-detector/
 ├── scripts/
 │   ├── detect_all.sh    # Batch tx detection → results.txt
 │   ├── parse_all.sh     # Batch CSV export → csv/
-│   └── visualize.py     # Plot power/velocity/spec_width from CSV
-├── monitor/             # Continuous monitoring daemon
+│   ├── visualize.py     # Plot power/velocity/spec_width from CSV
+│   ├── monitor.py       # Continuous monitoring daemon
+│   └── monitor_ctl.py   # Monitor CLI control
 ├── data/                # FITACF inputs (git-ignored)
 ├── csv/                 # CSV outputs (git-ignored)
 ├── results.txt          # Batch detection output (git-ignored)
