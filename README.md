@@ -1,38 +1,77 @@
 # superdarn-tx-detector
 
-CLI tool for parsing SuperDARN FITACF radar observation files and detecting transmitter state (ON/OFF).
+CLI tool for SuperDARN FITACF files: CSV export and transmitter state detection (ON/OFF).
 
-## What it does
+## Usage
 
-Reads FITACF files (including `.bz2` compressed) and either:
-- **CSV mode** — extracts per-range-gate measurements
-- **Detect mode** — determines whether the transmitter was ON or OFF
+```
+tx_detector <file> [...] [--csv] [--auto] [--threshold N]
+```
 
-### CSV columns
+| Flag | Description |
+|---|---|
+| *(none)* | Detect mode. Outputs `0` (OFF) or `1` (ON) per file to stdout. Diagnostics go to stderr. |
+| `--csv` | CSV mode. Dumps all range-gate measurements to stdout. |
+| `--auto` | Automatic threshold detection. See below. |
+| `--threshold N` | Use custom noise threshold instead of the default 60.0. |
+
+Input files can be `.fitacf` or `.fitacf.bz2` (decompressed on the fly).
+
+## Output
+
+### Detect mode (default)
+
+One line per file on stdout: `0` (transmitter OFF) or `1` (transmitter ON).
+
+Detection uses two conditions:
+- Average `noise.search` across all records **< threshold**
+- Global `nonzero_ratio` across all range gates **< 0.01**
+
+Both must be true for OFF; otherwise ON. Default threshold is 60.0, overridable with `--threshold`.
+
+### CSV mode (`--csv`)
+
+One row per range gate per time step:
+
+```
+time,range,power,velocity,spec_width,noise_search,stat_agc,stat_lopwr
+```
 
 | Column | Description |
 |---|---|
-| `time` | Time of day in fractional hours (UTC) |
-| `range` | Range gate distance in km |
+| `time` | Fractional hours (UTC) |
+| `range` | Range gate distance (km) |
 | `power` | Backscatter power (dB), `p_l` |
 | `velocity` | Doppler velocity (m/s) |
 | `spec_width` | Spectral width (m/s), `w_l` |
 | `noise_search` | Noise level from search phase |
-| `stat_agc` | AGC status |
-| `stat_lopwr` | Low power status |
+| `stat_agc` | AGC status flag |
+| `stat_lopwr` | Low power status flag |
+
+## Automatic threshold (`--auto`)
+
+For unlabeled datasets — finds the ON/OFF noise boundary adaptively.
+
+**Algorithm:** Maximum Relative Gap on per-file medians.
+
+1. For each file, compute the **median** `noise.search` (robust to within-file outliers)
+2. Sort the per-file medians
+3. Find the largest **relative** jump between adjacent values: `(a[i] - a[i-1]) / a[i-1]`
+4. Threshold = midpoint of that gap
+5. Classify each file by majority of its records above/below the threshold
+
+Two modes:
+
+- **Global** (`tx_detector data/* --auto`) — one threshold across all files, per-file classification on stdout, threshold on stderr
+- **Single-file** (`tx_detector file --auto`) — finds internal split within one file; add `--csv` for per-record cluster labels
 
 ## Quick start
 
 ### 1. Install RSTLite
 
-The project depends on [RSTLite](https://github.com/vtsuperdarn/RSTLite) for reading FITACF binary format.
-
 ```bash
 git clone https://github.com/vtsuperdarn/RSTLite
-
-cd RSTLite
-./install.sh
-cd ..
+cd RSTLite && ./install.sh && cd ..
 ```
 
 ### 2. Build
@@ -41,73 +80,36 @@ cd ..
 make
 ```
 
-This produces the `tx_detector` binary in the project root.
+Produces `./tx_detector`.
 
-### 3. Detect transmitter state
+### 3. Examples
 
 ```bash
-# Default: fixed threshold (60.0)
+# Detect with default threshold
 ./tx_detector data/20260614.0001.06.ekb.fitacf.bz2
-# → 0 (OFF) or 1 (ON)
 
-# Custom threshold
-./tx_detector data/20260614.0001.06.ekb.fitacf.bz2 --threshold 76.86
-
-# Automatic threshold — processes all files and finds adaptive boundary
+# Adaptively find threshold across a batch
 ./tx_detector data/*.fitacf.bz2 --auto
-# → per-file classification + derived threshold on stderr
-```
 
-### 4. Parse to CSV
+# Parse to CSV
+./tx_detector data/20260614.0001.06.ekb.fitacf.bz2 --csv > out.csv
 
-```bash
-./tx_detector data/20260614.0001.06.ekb.fitacf.bz2 --csv > output.csv
-```
-
-Both `.fitacf` and `.fitacf.bz2` files are supported (bz2 is decompressed on the fly via `bzip2 -dc`).
-
-### 5. Batch parse
-
-```bash
+# Batch CSV conversion
 mkdir -p csv
 bash scripts/parse_all.sh
 ```
 
-Output files: `data/<name>.fitacf.bz2` → `csv/<name>.csv`.
-
-## Automatic threshold detection (`--auto`)
-
-When datasets are unlabeled, use `--auto` to find the ON/OFF noise boundary without manual tuning.
-
-**Algorithm** — Maximum Relative Gap:
-
-1. For each file, compute the **median** `noise.search` value (robust to outliers)
-2. Sort the per-file medians
-3. Find the largest **relative** jump `(a[i] - a[i-1]) / a[i-1]` between adjacent values
-4. Threshold = midpoint of that gap
-5. Classify each file by majority of records above/below the threshold
-
-Two modes:
-
-| Command | Behaviour |
-|---|---|
-| `tx_detector data/* --auto` | Global mode: single threshold across all files |
-| `tx_detector file --auto` | Single-file mode: threshold from internal split |
-| `tx_detector file --auto --csv` | Single-file with per-record cluster labels |
-
-## Project structure
+## Structure
 
 ```
-superdarn-tx-detector/
-├── src/
-│   ├── viewer.c         # FITACF parser, CSV output, transmitter detection
-│   ├── main.h           # Includes and RST type imports
-│   └── defs.h           # Type definitions
-├── scripts/
-│   └── parse_all.sh     # Batch processing script
-├── data/                # FITACF input files (git-ignored)
-├── csv/                 # CSV output (git-ignored)
-├── RSTLite/             # RST Lite library (git-ignored)
-├── Makefile
-└── README.md
+src/
+├── viewer.c    # CSV parser, detection logic, auto-threshold
+├── main.h      # RST includes
+└── defs.h      # Integer typedefs, zlib
+scripts/
+└── parse_all.sh  # Batch CSV conversion
+data/             # FITACF inputs (git-ignored)
+csv/              # CSV outputs (git-ignored)
+RSTLite/          # RST Lite library (git-ignored)
+Makefile
 ```
