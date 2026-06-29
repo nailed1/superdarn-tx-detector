@@ -17,9 +17,7 @@ tx_detector <file> [...] [--csv] [--auto] [--threshold N]
 
 Input files can be `.fitacf` or `.fitacf.bz2` (decompressed on the fly).
 
-## Output
-
-### Detect mode (default)
+## Detect mode (default)
 
 One line per file on stdout: `0` (transmitter OFF) or `1` (transmitter ON).
 
@@ -29,7 +27,7 @@ Detection uses two conditions:
 
 Both must be true for OFF; otherwise ON. Default threshold is 60.0, overridable with `--threshold`.
 
-### CSV mode (`--csv`)
+## CSV mode (`--csv`)
 
 One row per range gate per time step:
 
@@ -91,25 +89,48 @@ Produces `./tx_detector`.
 # Adaptively find threshold across a batch
 ./tx_detector data/*.fitacf.bz2 --auto
 
+# Custom threshold
+./tx_detector data/20260614.0001.06.ekb.fitacf.bz2 --threshold 76.86
+
 # Parse to CSV
 ./tx_detector data/20260614.0001.06.ekb.fitacf.bz2 --csv > out.csv
+```
 
-# Batch CSV conversion
+### 4. Batch operations
+
+```bash
+# Batch detection → results.txt
+bash scripts/detect_all.sh
+
+# Batch CSV export → csv/
 mkdir -p csv
 bash scripts/parse_all.sh
+
+# Visualize CSV
+python scripts/visualize.py csv/20260614.0001.06.ekb.csv
 ```
 
-## Structure
+### 5. Monitor system
+
+See `monitor/` for the continuous monitoring daemon (multi-instance, email alerts, CLI control).
+
+## Project structure
 
 ```
-src/
-├── viewer.c    # CSV parser, detection logic, auto-threshold
-├── main.h      # RST includes
-└── defs.h      # Integer typedefs, zlib
-scripts/
-└── parse_all.sh  # Batch CSV conversion
-data/             # FITACF inputs (git-ignored)
-csv/              # CSV outputs (git-ignored)
-RSTLite/          # RST Lite library (git-ignored)
-Makefile
+superdarn-tx-detector/
+├── src/
+│   ├── viewer.c         # CSV parser, detection logic, auto-threshold
+│   ├── main.h           # RST includes
+│   └── defs.h           # Integer typedefs, zlib
+├── scripts/
+│   ├── detect_all.sh    # Batch tx detection → results.txt
+│   ├── parse_all.sh     # Batch CSV export → csv/
+│   └── visualize.py     # Plot power/velocity/spec_width from CSV
+├── monitor/             # Continuous monitoring daemon
+├── data/                # FITACF inputs (git-ignored)
+├── csv/                 # CSV outputs (git-ignored)
+├── results.txt          # Batch detection output (git-ignored)
+├── RSTLite/             # RST Lite library (git-ignored)
+├── Makefile
+└── README.md
 ```

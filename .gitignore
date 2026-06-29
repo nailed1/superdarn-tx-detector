@@ -7,6 +7,9 @@ RSTLite/
 a.out
 tx_detector
 
+# Python cache
+__pycache__/
+
 # Data files
 *.fitacf
 *.dat
@@ -14,6 +17,13 @@ tx_detector
 
 # Output
 csv/
+results.txt
 
 # Build artifacts
 build/
+
+# Monitor runtime/config files
+*.conf
+smtp.conf
+*.state
+*.pause
